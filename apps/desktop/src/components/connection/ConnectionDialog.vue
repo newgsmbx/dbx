@@ -2001,7 +2001,7 @@ async function createDuckDbFilePath() {
 }
 
 function ensureSqliteFileExtension(path: string): string {
-  return /\.(db|sqlite|sqlite3)$/i.test(path) ? path : `${path}.db`;
+  return /\.(db|db3|sqlite|sqlite3)$/i.test(path) ? path : `${path}.db`;
 }
 
 async function createSqliteFilePath() {
@@ -2010,7 +2010,7 @@ async function createSqliteFilePath() {
   const selected = await save({
     title: t("connection.createSqliteFile"),
     defaultPath: "database.db",
-    filters: [{ name: "SQLite", extensions: ["db", "sqlite", "sqlite3"] }],
+    filters: [{ name: "SQLite", extensions: ["db", "db3", "sqlite", "sqlite3"] }],
   });
   if (!selected) return;
 

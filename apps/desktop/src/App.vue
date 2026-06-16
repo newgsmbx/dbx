@@ -592,7 +592,7 @@ async function openPendingSqlFiles() {
   }
 }
 
-const DB_EXTENSIONS = [".db", ".sqlite", ".sqlite3", ".duckdb"];
+const DB_EXTENSIONS = [".db", ".db3", ".sqlite", ".sqlite3", ".duckdb"];
 
 function getDbTypeFromPath(path: string): "sqlite" | "duckdb" | null {
   const lower = path.toLowerCase();
