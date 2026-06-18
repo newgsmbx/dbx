@@ -723,21 +723,20 @@ async fn linked_server_table_rows(
     schema: Option<&str>,
     table_name: Option<&str>,
 ) -> Result<Vec<LinkedServerTableRow>, String> {
-    let schema_param = schema.unwrap_or("");
-    let table_name_param = table_name.unwrap_or("");
-    let stream = client
-        .query(
-            "EXEC sp_tables_ex \
-             @table_server = @P1, \
-             @table_name = @P2, \
-             @table_schema = @P3, \
-             @table_catalog = @P4, \
-             @table_type = '''TABLE'',''VIEW''', \
-             @fUsePattern = 0",
-            &[&server, &table_name_param, &schema_param, &catalog],
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+    let sql = format!(
+        "EXEC sp_tables_ex \
+         @table_server = {}, \
+         @table_name = {}, \
+         @table_schema = {}, \
+         @table_catalog = {}, \
+         @table_type = '''TABLE'',''VIEW''', \
+         @fUsePattern = 0",
+        sqlserver_nstring_literal(server),
+        sqlserver_optional_nstring_literal(table_name),
+        sqlserver_optional_nstring_literal(schema),
+        sqlserver_nstring_literal(catalog),
+    );
+    let stream = client.query(sql.as_str(), &[]).await.map_err(|e| e.to_string())?;
     let rows = stream.into_first_result().await.map_err(|e| e.to_string())?;
     Ok(rows
         .iter()
@@ -754,6 +753,14 @@ async fn linked_server_table_rows(
             })
         })
         .collect())
+}
+
+fn sqlserver_optional_nstring_literal(value: Option<&str>) -> String {
+    value.filter(|value| !value.trim().is_empty()).map(sqlserver_nstring_literal).unwrap_or_else(|| "NULL".to_string())
+}
+
+fn sqlserver_nstring_literal(value: &str) -> String {
+    format!("N'{}'", value.replace('\'', "''"))
 }
 
 fn normalize_linked_server_table_type(value: Option<&str>) -> String {

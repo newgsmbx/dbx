@@ -102,6 +102,10 @@ export const syncSavedSqlDirectory = forward("syncSavedSqlDirectory");
 
 // Schema
 export const listDatabases = forward("listDatabases");
+export const listSqlServerLinkedServers = forward("listSqlServerLinkedServers");
+export const listSqlServerLinkedServerCatalogs = forward("listSqlServerLinkedServerCatalogs");
+export const listSqlServerLinkedServerSchemas = forward("listSqlServerLinkedServerSchemas");
+export const listSqlServerLinkedServerTables = forward("listSqlServerLinkedServerTables");
 export const saveSchemaCache = forward("saveSchemaCache");
 export const loadSchemaCache = forward("loadSchemaCache");
 export const deleteSchemaCachePrefix = forward("deleteSchemaCachePrefix");

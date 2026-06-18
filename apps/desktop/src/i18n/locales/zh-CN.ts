@@ -1216,6 +1216,7 @@ export default {
   tree: {
     savedSql: "SQL 库",
     userAdmin: "用户与权限",
+    linkedServers: "链接服务器",
     defaultDatabase: "默认库",
     columns: "字段",
     indexes: "索引",

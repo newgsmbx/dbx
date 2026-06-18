@@ -1,6 +1,7 @@
 ﻿import type {
   ConnectionConfig,
   DatabaseInfo,
+  LinkedServerInfo,
   TableInfo,
   ObjectInfo,
   ObjectSource,
@@ -390,6 +391,22 @@ export async function syncSavedSqlDirectory(_request: SavedSqlSyncRequest): Prom
 
 export async function listDatabases(connectionId: string): Promise<DatabaseInfo[]> {
   return get(`/api/schema/databases?${qs({ connection_id: connectionId })}`);
+}
+
+export async function listSqlServerLinkedServers(connectionId: string): Promise<LinkedServerInfo[]> {
+  return get(`/api/schema/sqlserver/linked-servers?${qs({ connection_id: connectionId })}`);
+}
+
+export async function listSqlServerLinkedServerCatalogs(connectionId: string, server: string): Promise<DatabaseInfo[]> {
+  return get(`/api/schema/sqlserver/linked-server-catalogs?${qs({ connection_id: connectionId, server })}`);
+}
+
+export async function listSqlServerLinkedServerSchemas(connectionId: string, server: string, catalog: string): Promise<string[]> {
+  return get(`/api/schema/sqlserver/linked-server-schemas?${qs({ connection_id: connectionId, server, catalog })}`);
+}
+
+export async function listSqlServerLinkedServerTables(connectionId: string, server: string, catalog: string, schema: string, filter?: string, limit?: number, offset?: number): Promise<TableInfo[]> {
+  return get(`/api/schema/sqlserver/linked-server-tables?${qs({ connection_id: connectionId, server, catalog, schema, filter, limit, offset })}`);
 }
 
 export async function saveSchemaCache(cacheKey: string, payload: unknown): Promise<void> {

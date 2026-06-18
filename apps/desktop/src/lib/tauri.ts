@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ConnectionConfig,
   DatabaseInfo,
+  LinkedServerInfo,
   TableInfo,
   ObjectInfo,
   ObjectSource,
@@ -472,6 +473,22 @@ export async function closeDatabaseConnection(connectionId: string, database: st
 
 export async function listDatabases(connectionId: string): Promise<DatabaseInfo[]> {
   return invoke("list_databases", { connectionId });
+}
+
+export async function listSqlServerLinkedServers(connectionId: string): Promise<LinkedServerInfo[]> {
+  return invoke("list_sqlserver_linked_servers", { connectionId });
+}
+
+export async function listSqlServerLinkedServerCatalogs(connectionId: string, server: string): Promise<DatabaseInfo[]> {
+  return invoke("list_sqlserver_linked_server_catalogs", { connectionId, server });
+}
+
+export async function listSqlServerLinkedServerSchemas(connectionId: string, server: string, catalog: string): Promise<string[]> {
+  return invoke("list_sqlserver_linked_server_schemas", { connectionId, server, catalog });
+}
+
+export async function listSqlServerLinkedServerTables(connectionId: string, server: string, catalog: string, schema: string, filter?: string, limit?: number, offset?: number): Promise<TableInfo[]> {
+  return invoke("list_sqlserver_linked_server_tables", { connectionId, server, catalog, schema, filter, limit, offset });
 }
 
 export async function saveSchemaCache(cacheKey: string, payload: unknown): Promise<void> {

@@ -207,6 +207,13 @@ export interface DatabaseInfo {
   name: string;
 }
 
+export interface LinkedServerInfo {
+  name: string;
+  product?: string | null;
+  provider?: string | null;
+  data_source?: string | null;
+}
+
 export interface TableInfo {
   name: string;
   table_type: string;
@@ -391,6 +398,10 @@ export type TreeNodeType =
   | "connection"
   | "connection-group"
   | "database"
+  | "linked-server-root"
+  | "linked-server"
+  | "linked-server-catalog"
+  | "linked-server-schema"
   | "schema"
   | "table"
   | "view"
@@ -452,6 +463,9 @@ export interface TreeNode {
   pinned?: boolean;
   connectionId?: string;
   database?: string;
+  linkedServer?: string;
+  linkedCatalog?: string;
+  linkedSchema?: string;
   mqTenant?: string;
   schema?: string;
   tableName?: string;

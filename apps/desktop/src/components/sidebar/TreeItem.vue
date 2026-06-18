@@ -32,6 +32,7 @@ import {
   Upload,
   FileCode,
   Network,
+  Server,
   PencilRuler,
   Search,
   FolderInput,
@@ -111,6 +112,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { hasEnabledTransportLayers } from "@/lib/connectionTransport";
 import { formatShortcut } from "@/lib/shortcutRegistry";
 import { rankSavedSqlHistory, type SavedSqlHistoryScope } from "@/lib/savedSqlHistory";
+import { isSqlServerLinkedNode } from "@/lib/sqlServerLinkedServers";
 import DatabaseIcon from "@/components/icons/DatabaseIcon.vue";
 import ConnectionErrorIndicator from "@/components/connection/ConnectionErrorIndicator.vue";
 import VisibleDatabasesDialog from "@/components/sidebar/VisibleDatabasesDialog.vue";
@@ -195,6 +197,14 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
       return { icon: node.isExpanded ? FolderOpen : FolderClosed, colorClass: "text-amber-500" };
     case "database":
       return { icon: Database, colorClass: "text-yellow-500" };
+    case "linked-server-root":
+      return { icon: Network, colorClass: "text-blue-500" };
+    case "linked-server":
+      return { icon: Server, colorClass: "text-blue-400" };
+    case "linked-server-catalog":
+      return { icon: Database, colorClass: "text-yellow-500" };
+    case "linked-server-schema":
+      return { icon: FolderOpen, colorClass: "text-sky-400" };
     case "schema":
       return { icon: FolderOpen, colorClass: "text-sky-400" };
     case "table":
@@ -273,7 +283,7 @@ function getIconInfo(node: TreeNode): { icon: any; colorClass: string } | null {
 }
 
 const groupTypes: Set<TreeNodeType> = new Set(["group-columns", "group-indexes", "group-fkeys", "group-triggers", "group-tables", "group-views", "group-materialized-views", "group-procedures", "group-functions", "group-sequences", "group-packages", "group-partitions"]);
-const pinnableTypes: Set<TreeNodeType> = new Set(["connection-group", "database", "schema", "table", "view", "materialized_view", "redis-db", "mongo-db", "mongo-collection", "elasticsearch-index"]);
+const pinnableTypes: Set<TreeNodeType> = new Set(["connection-group", "database", "linked-server", "linked-server-catalog", "linked-server-schema", "schema", "table", "view", "materialized_view", "redis-db", "mongo-db", "mongo-collection", "elasticsearch-index"]);
 
 function isGroupLabel(node: TreeNode): boolean {
   return groupTypes.has(node.type);
@@ -283,6 +293,7 @@ function displayLabel(node: TreeNode): string {
   if (node.type === "load-more") return t(node.label);
   if (node.type === "object-browser") return t(node.label, { count: node.objectCount ?? 0 });
   if (node.type === "user-admin") return t(node.label);
+  if (node.type === "linked-server-root") return t(node.label);
   if (node.label === "tree.defaultDatabase") return t(node.label);
   return isGroupLabel(node) ? t(node.label) : node.label;
 }
@@ -391,6 +402,14 @@ async function toggle() {
         await connectionStore.loadTables(node.connectionId, node.database);
       }
     } else if (node.type === "schema" && node.connectionId && hasTreeNodeDatabaseContext(node) && node.schema) {
+      await connectionStore.loadTables(node.connectionId, node.database, node.schema);
+    } else if (node.type === "linked-server-root" && node.connectionId) {
+      await connectionStore.loadSqlServerLinkedServers(node.connectionId);
+    } else if (node.type === "linked-server" && node.connectionId) {
+      await connectionStore.loadSqlServerLinkedServerCatalogs(node);
+    } else if (node.type === "linked-server-catalog" && node.connectionId) {
+      await connectionStore.loadSqlServerLinkedServerSchemas(node);
+    } else if (node.type === "linked-server-schema" && node.connectionId && hasTreeNodeDatabaseContext(node) && node.schema) {
       await connectionStore.loadTables(node.connectionId, node.database, node.schema);
     } else if ((node.type === "table" || node.type === "view" || node.type === "materialized_view") && node.connectionId && hasTreeNodeDatabaseContext(node)) {
       await connectionStore.loadTableGroups(node.connectionId, node.database, node.label, node.schema, node.id);
@@ -1447,6 +1466,7 @@ function requestDropTableChildObject() {
 }
 
 function canDropTreeNode(node: TreeNode): boolean {
+  if (isSqlServerLinkedNode(node)) return false;
   if (node.type === "table") return !!node.connectionId && !!node.database;
   if (node.type === "view" || node.type === "materialized_view" || node.type === "procedure" || node.type === "function") {
     return !!node.connectionId && !!node.database && !!dropObjectSqlOptionsForNode(node);
@@ -1684,7 +1704,7 @@ async function confirmBatchDrop() {
   }
 }
 
-const isTableNotView = computed(() => props.node.type === "table");
+const isTableNotView = computed(() => props.node.type === "table" && !isSqlServerLinkedNode(props.node));
 
 const supportsTruncate = computed(() => {
   return supportsTableTruncate(currentDatabaseType());
@@ -1692,7 +1712,7 @@ const supportsTruncate = computed(() => {
 
 const canCreateTable = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return (props.node.type === "database" || props.node.type === "schema" || props.node.type === "group-tables") && !!props.node.database && supportsTableStructureEditing(tableStructureDatabaseTypeForConnection(config));
+  return (props.node.type === "database" || props.node.type === "schema" || props.node.type === "group-tables") && !isSqlServerLinkedNode(props.node) && !!props.node.database && supportsTableStructureEditing(tableStructureDatabaseTypeForConnection(config));
 });
 
 const canCreateDatabase = computed(() => {
@@ -1712,7 +1732,7 @@ const canSetCreateDatabaseCharset = computed(() => {
 
 const canDropDatabase = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return props.node.type === "database" && supportsDatabaseCreation(config?.db_type);
+  return props.node.type === "database" && !isSqlServerLinkedNode(props.node) && supportsDatabaseCreation(config?.db_type);
 });
 
 const canCreateSchema = computed(() => {
@@ -1722,7 +1742,7 @@ const canCreateSchema = computed(() => {
 
 const canDropSchema = computed(() => {
   const config = props.node.connectionId ? connectionStore.getConfig(props.node.connectionId) : undefined;
-  return props.node.type === "schema" && usesTreeSchemaMode(effectiveDatabaseTypeForConnection(config)) && !connectionUsesDatabaseObjectTreeMode(config);
+  return props.node.type === "schema" && !isSqlServerLinkedNode(props.node) && usesTreeSchemaMode(effectiveDatabaseTypeForConnection(config)) && !connectionUsesDatabaseObjectTreeMode(config);
 });
 
 function tableAdminSqlOptions(): TableAdminSqlOptions {
@@ -2598,10 +2618,10 @@ const canOpenObjectBrowser = computed(() => {
   return supportsObjectBrowserTreeNode(rawDatabaseType(), props.node.type);
 });
 const canOpenTableImport = computed(() => {
-  return props.node.type === "table" && !!props.node.database && supportsTableImport(currentDatabaseType());
+  return props.node.type === "table" && !isSqlServerLinkedNode(props.node) && !!props.node.database && supportsTableImport(currentDatabaseType());
 });
 const canOpenStructureEditor = computed(() => {
-  return props.node.type === "table" && !!props.node.database && supportsTableStructureEditing(currentTableStructureDatabaseType());
+  return props.node.type === "table" && !isSqlServerLinkedNode(props.node) && !!props.node.database && supportsTableStructureEditing(currentTableStructureDatabaseType());
 });
 const canOpenFieldLineage = computed(() => {
   return props.node.type === "column" && !!props.node.database && !!props.node.tableName && supportsFieldLineage(currentDatabaseType());

@@ -272,6 +272,68 @@ pub async fn list_databases_core(state: &AppState, connection_id: &str) -> Resul
     retry_metadata_connection(state, connection_id, None, || list_databases_once(state, connection_id)).await
 }
 
+pub async fn list_sqlserver_linked_servers_core(
+    state: &AppState,
+    connection_id: &str,
+) -> Result<Vec<db::LinkedServerInfo>, String> {
+    let connections = state.connections.read().await;
+    if let Some(client) = extract_pool!(&connections, connection_id, SqlServer) {
+        drop(connections);
+        let mut client = client.lock().await;
+        return db::sqlserver::list_linked_servers(&mut client).await;
+    }
+    Ok(vec![])
+}
+
+pub async fn list_sqlserver_linked_server_catalogs_core(
+    state: &AppState,
+    connection_id: &str,
+    server: &str,
+) -> Result<Vec<db::DatabaseInfo>, String> {
+    let connections = state.connections.read().await;
+    if let Some(client) = extract_pool!(&connections, connection_id, SqlServer) {
+        drop(connections);
+        let mut client = client.lock().await;
+        return db::sqlserver::list_linked_server_catalogs(&mut client, server).await;
+    }
+    Ok(vec![])
+}
+
+pub async fn list_sqlserver_linked_server_schemas_core(
+    state: &AppState,
+    connection_id: &str,
+    server: &str,
+    catalog: &str,
+) -> Result<Vec<String>, String> {
+    let connections = state.connections.read().await;
+    if let Some(client) = extract_pool!(&connections, connection_id, SqlServer) {
+        drop(connections);
+        let mut client = client.lock().await;
+        return db::sqlserver::list_linked_server_schemas(&mut client, server, catalog).await;
+    }
+    Ok(vec![])
+}
+
+pub async fn list_sqlserver_linked_server_tables_core(
+    state: &AppState,
+    connection_id: &str,
+    server: &str,
+    catalog: &str,
+    schema: &str,
+    filter: Option<&str>,
+    limit: Option<usize>,
+    offset: Option<usize>,
+) -> Result<Vec<db::TableInfo>, String> {
+    let connections = state.connections.read().await;
+    if let Some(client) = extract_pool!(&connections, connection_id, SqlServer) {
+        drop(connections);
+        let mut client = client.lock().await;
+        return db::sqlserver::list_linked_server_tables(&mut client, server, catalog, schema, filter, limit, offset)
+            .await;
+    }
+    Ok(vec![])
+}
+
 async fn list_databases_once(state: &AppState, connection_id: &str) -> Result<Vec<db::DatabaseInfo>, String> {
     log::info!("[list_databases] connection_id={connection_id}");
     {
@@ -490,6 +552,23 @@ async fn list_tables_once(
             return db::influxdb_driver::list_tables(&client, database)
                 .await
                 .map(|tables| filter_table_infos(tables, filter, limit, offset, object_types));
+        }
+        if let Some(linked) = crate::sql_dialect::parse_sqlserver_linked_schema_ref(schema) {
+            if let Some(client) = extract_pool!(&connections, &pool_key, SqlServer) {
+                drop(connections);
+                let mut client = client.lock().await;
+                return db::sqlserver::list_linked_server_tables(
+                    &mut client,
+                    &linked.server,
+                    &linked.catalog,
+                    &linked.schema,
+                    filter,
+                    None,
+                    None,
+                )
+                .await
+                .map(|tables| filter_table_infos(tables, filter, limit, offset, object_types));
+            }
         }
         if object_types.is_some() {
             if let Some(client) = extract_pool!(&connections, &pool_key, SqlServer) {
@@ -1277,6 +1356,21 @@ pub async fn get_columns_core(
             drop(connections);
             return db::influxdb_driver::get_columns(&client, database, table).await.map(deduplicate_column_infos);
         }
+        if let Some(linked) = crate::sql_dialect::parse_sqlserver_linked_schema_ref(schema) {
+            if let Some(client) = extract_pool!(&connections, &pool_key, SqlServer) {
+                drop(connections);
+                let mut client = client.lock().await;
+                return db::sqlserver::get_linked_server_columns(
+                    &mut client,
+                    &linked.server,
+                    &linked.catalog,
+                    &linked.schema,
+                    table,
+                )
+                .await
+                .map(deduplicate_column_infos);
+            }
+        }
         try_sqlserver!(connections, &pool_key, get_columns, schema, table);
         if let Some(client) = extract_pool!(&connections, &pool_key, Agent) {
             let fallback_config = db_config.clone();
@@ -1406,6 +1500,9 @@ pub async fn list_indexes_core(
     schema: &str,
     table: &str,
 ) -> Result<Vec<db::IndexInfo>, String> {
+    if crate::sql_dialect::parse_sqlserver_linked_schema_ref(schema).is_some() {
+        return Ok(vec![]);
+    }
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
     let db_config = connection_config(state, connection_id).await;
 
@@ -1442,6 +1539,9 @@ pub async fn list_foreign_keys_core(
     schema: &str,
     table: &str,
 ) -> Result<Vec<db::ForeignKeyInfo>, String> {
+    if crate::sql_dialect::parse_sqlserver_linked_schema_ref(schema).is_some() {
+        return Ok(vec![]);
+    }
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
@@ -1471,6 +1571,9 @@ pub async fn list_triggers_core(
     schema: &str,
     table: &str,
 ) -> Result<Vec<db::TriggerInfo>, String> {
+    if crate::sql_dialect::parse_sqlserver_linked_schema_ref(schema).is_some() {
+        return Ok(vec![]);
+    }
     let pool_key = state.get_or_create_pool(connection_id, Some(database)).await?;
 
     {
@@ -1566,6 +1669,9 @@ pub async fn get_table_ddl_core(
     table: &str,
     object_type: Option<db::ObjectSourceKind>,
 ) -> Result<String, String> {
+    if crate::sql_dialect::parse_sqlserver_linked_schema_ref(schema).is_some() {
+        return Err("DDL is not supported for SQL Server linked server tables".to_string());
+    }
     if matches!(object_type, Some(db::ObjectSourceKind::View)) {
         let source =
             get_object_source_core(state, connection_id, database, schema, table, db::ObjectSourceKind::View).await?;

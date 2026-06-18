@@ -1217,6 +1217,7 @@ export default {
   tree: {
     savedSql: "SQL Library",
     userAdmin: "Users & Privileges",
+    linkedServers: "Linked Servers",
     defaultDatabase: "Default DB",
     columns: "Columns",
     indexes: "Indexes",
