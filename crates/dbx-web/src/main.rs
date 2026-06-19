@@ -398,7 +398,14 @@ async fn main() {
             "/app-settings/pinned-tree-node-ids",
             get(routes::app_settings::load_pinned_tree_node_ids).post(routes::app_settings::save_pinned_tree_node_ids),
         )
-        .route("/app-settings/config/decrypt", post(routes::app_settings::decrypt_config));
+        .route("/app-settings/config/decrypt", post(routes::app_settings::decrypt_config))
+        // Cloud sync
+        .route("/cloud-sync/webdav/test", post(routes::cloud_sync::webdav_sync_test))
+        .route("/cloud-sync/webdav/password-status", post(routes::cloud_sync::webdav_password_status))
+        .route("/cloud-sync/webdav/save-password", post(routes::cloud_sync::save_webdav_saved_password))
+        .route("/cloud-sync/webdav/forget-password", post(routes::cloud_sync::forget_webdav_saved_password))
+        .route("/cloud-sync/webdav/upload", post(routes::cloud_sync::webdav_sync_upload))
+        .route("/cloud-sync/webdav/download", post(routes::cloud_sync::webdav_sync_download));
 
     let api = add_mq_routes(api)
         .layer(middleware::from_fn_with_state(web_state.clone(), auth::auth_middleware))

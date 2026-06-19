@@ -962,28 +962,28 @@ export interface WebDavPasswordStatus {
   hasSavedPassword: boolean;
 }
 
-export async function webdavSyncTest(_config: WebDavConfig): Promise<void> {
-  throw new Error("WebDAV sync is only available in the desktop app.");
+export async function webdavSyncTest(config: WebDavConfig): Promise<void> {
+  return post("/api/cloud-sync/webdav/test", { config });
 }
 
-export async function webdavPasswordStatus(_config: WebDavConfig): Promise<WebDavPasswordStatus> {
-  return { hasSavedPassword: false };
+export async function webdavPasswordStatus(config: WebDavConfig): Promise<WebDavPasswordStatus> {
+  return post("/api/cloud-sync/webdav/password-status", { config });
 }
 
-export async function saveWebdavSavedPassword(_config: WebDavConfig, _password: string): Promise<void> {
-  throw new Error("WebDAV sync is only available in the desktop app.");
+export async function saveWebdavSavedPassword(config: WebDavConfig, password: string): Promise<void> {
+  return post("/api/cloud-sync/webdav/save-password", { config, password });
 }
 
-export async function forgetWebdavSavedPassword(_config: WebDavConfig): Promise<void> {
-  throw new Error("WebDAV sync is only available in the desktop app.");
+export async function forgetWebdavSavedPassword(config: WebDavConfig): Promise<void> {
+  return post("/api/cloud-sync/webdav/forget-password", { config });
 }
 
-export async function webdavSyncUpload(_config: WebDavConfig, _editorSettings?: unknown, _secretsPassphrase?: string): Promise<WebDavSyncSummary> {
-  throw new Error("WebDAV sync is only available in the desktop app.");
+export async function webdavSyncUpload(config: WebDavConfig, editorSettings?: unknown, secretsPassphrase?: string): Promise<WebDavSyncSummary> {
+  return post("/api/cloud-sync/webdav/upload", { config, editorSettings, secretsPassphrase });
 }
 
-export async function webdavSyncDownload(_config: WebDavConfig, _secretsPassphrase?: string): Promise<WebDavDownloadResult> {
-  throw new Error("WebDAV sync is only available in the desktop app.");
+export async function webdavSyncDownload(config: WebDavConfig, secretsPassphrase?: string): Promise<WebDavDownloadResult> {
+  return post("/api/cloud-sync/webdav/download", { config, secretsPassphrase });
 }
 
 export async function loadPinnedTreeNodeIds(): Promise<string[]> {

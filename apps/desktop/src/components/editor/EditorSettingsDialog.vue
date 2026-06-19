@@ -70,12 +70,14 @@ import AppLogo from "@/components/icons/AppLogo.vue";
 import SqlFormatterSettingsPanel from "./SqlFormatterSettingsPanel.vue";
 import type { AppThemeAppearance } from "@/lib/appTheme";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useSavedSqlStore } from "@/stores/savedSqlStore";
 import { currentLocale, setLocale, type Locale } from "@/i18n";
 import { LOCALE_OPTIONS } from "@/lib/localeOptions";
 
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const connectionStore = useConnectionStore();
+const savedSqlStore = useSavedSqlStore();
 const { isDark, themeMode, setThemeMode } = useTheme();
 
 let cachedSystemFonts: string[] | null = null;
@@ -882,9 +884,12 @@ const webdavHasSavedPassword = ref(false);
 const webdavRemotePath = ref(localStorage.getItem("dbx-webdav-remote-path") || "DBX/sync/snapshot.json");
 const webdavSyncSecrets = ref(false);
 const webdavSecretsPassphrase = ref("");
+const webdavAutoUploadEnabled = ref(localStorage.getItem("dbx-webdav-auto-upload-enabled") === "true");
+const webdavAutoUploadIntervalMinutes = ref(Number(localStorage.getItem("dbx-webdav-auto-upload-interval-minutes") || "30"));
 const webdavBusy = ref<"" | "test" | "upload" | "download">("");
 const webdavMessage = ref("");
 const webdavError = ref(false);
+let webdavAutoUploadTimer: ReturnType<typeof window.setInterval> | undefined;
 
 const webdavReady = computed(() => !!webdavEndpoint.value.trim() && !webdavBusy.value && (!webdavSyncSecrets.value || !!webdavSecretsPassphrase.value.trim()));
 
@@ -906,6 +911,8 @@ function rememberWebDavFields() {
   localStorage.setItem("dbx-webdav-endpoint", webdavEndpoint.value.trim());
   localStorage.setItem("dbx-webdav-username", webdavUsername.value.trim());
   localStorage.setItem("dbx-webdav-remote-path", webdavRemotePath.value.trim() || "DBX/sync/snapshot.json");
+  localStorage.setItem("dbx-webdav-auto-upload-enabled", String(webdavAutoUploadEnabled.value));
+  localStorage.setItem("dbx-webdav-auto-upload-interval-minutes", String(normalizedWebDavAutoUploadInterval()));
 }
 
 function setWebDavResult(message: string, error = false) {
@@ -970,6 +977,43 @@ async function uploadWebDavSnapshot() {
   });
 }
 
+function normalizedWebDavAutoUploadInterval() {
+  const value = Number(webdavAutoUploadIntervalMinutes.value);
+  if (!Number.isFinite(value)) return 30;
+  return Math.max(1, Math.min(1440, Math.round(value)));
+}
+
+function scheduleWebDavAutoUpload() {
+  if (webdavAutoUploadTimer) {
+    window.clearInterval(webdavAutoUploadTimer);
+    webdavAutoUploadTimer = undefined;
+  }
+  if (!webdavAutoUploadEnabled.value) return;
+
+  const intervalMinutes = normalizedWebDavAutoUploadInterval();
+  webdavAutoUploadIntervalMinutes.value = intervalMinutes;
+  webdavAutoUploadTimer = window.setInterval(() => {
+    void runWebDavAutoUpload();
+  }, intervalMinutes * 60_000);
+}
+
+async function runWebDavAutoUpload() {
+  if (!webdavEndpoint.value.trim() || webdavBusy.value) return;
+  webdavBusy.value = "upload";
+  webdavMessage.value = "";
+  webdavError.value = false;
+  try {
+    rememberWebDavFields();
+    await applyWebDavPasswordPreference();
+    const summary = await webdavSyncUpload(currentWebDavConfig(), settingsStore.editorSettings, webdavSyncSecrets.value ? webdavSecretsPassphrase.value : undefined);
+    setWebDavResult(t("settings.syncAutoUploadSuccess", { bytes: summary.bytes, path: summary.remotePath }));
+  } catch (e: any) {
+    setWebDavResult(e?.message || String(e), true);
+  } finally {
+    webdavBusy.value = "";
+  }
+}
+
 async function downloadWebDavSnapshot() {
   if (!window.confirm(t("settings.syncDownloadConfirm"))) return;
   await runWebDavAction("download", async () => {
@@ -979,6 +1023,7 @@ async function downloadWebDavSnapshot() {
     }
     await settingsStore.updateDesktopSettings(result.desktopSettings);
     await connectionStore.initFromDisk();
+    await savedSqlStore.initFromStorage();
     const message = t("settings.syncDownloadSuccess", {
       bytes: result.summary.bytes,
       path: result.summary.remotePath,
@@ -1031,6 +1076,10 @@ watch([webdavEndpoint, webdavUsername], () => {
 watch(webdavRememberPassword, (val) => {
   localStorage.setItem("dbx-webdav-remember-password", String(val));
 });
+watch([webdavAutoUploadEnabled, webdavAutoUploadIntervalMinutes], () => {
+  rememberWebDavFields();
+  scheduleWebDavAutoUpload();
+});
 
 watch(activeSettingsTab, (tab) => {
   if (tab === "mcp" && !mcpStatus.value && !mcpStatusLoading.value) void refreshMcpStatus();
@@ -1043,12 +1092,17 @@ watch(activeSettingsTab, (tab) => {
 
 onMounted(() => {
   void refreshWebDavPasswordStatus();
+  scheduleWebDavAutoUpload();
   checkLayoutDescTruncation();
   checkIconThemeDescTruncation();
   initTruncationObservers();
 });
 
 onUnmounted(() => {
+  if (webdavAutoUploadTimer) {
+    window.clearInterval(webdavAutoUploadTimer);
+    webdavAutoUploadTimer = undefined;
+  }
   cleanupTruncationObservers();
 });
 
@@ -2366,6 +2420,18 @@ watch(
                   <Label for="webdav-remote-path">{{ t("settings.syncRemotePath") }}</Label>
                   <Input id="webdav-remote-path" v-model="webdavRemotePath" autocomplete="off" />
                   <p class="text-xs text-muted-foreground">{{ t("settings.syncRemotePathDescription") }}</p>
+                </div>
+                <div class="space-y-2 md:col-span-2 rounded-md border bg-muted/20 px-3 py-3">
+                  <label class="flex items-center gap-2 text-xs">
+                    <input v-model="webdavAutoUploadEnabled" type="checkbox" class="h-4 w-4 shrink-0 accent-primary" />
+                    <span class="font-medium">{{ t("settings.syncAutoUpload") }}</span>
+                  </label>
+                  <div class="flex items-center gap-2">
+                    <Label for="webdav-auto-upload-interval" class="text-xs text-muted-foreground">{{ t("settings.syncAutoUploadInterval") }}</Label>
+                    <Input id="webdav-auto-upload-interval" v-model.number="webdavAutoUploadIntervalMinutes" type="number" min="1" max="1440" step="1" class="h-7 w-24 text-xs" :disabled="!webdavAutoUploadEnabled" />
+                    <span class="text-xs text-muted-foreground">{{ t("settings.syncAutoUploadMinutes") }}</span>
+                  </div>
+                  <p class="text-xs text-muted-foreground">{{ t("settings.syncAutoUploadDescription") }}</p>
                 </div>
               </div>
 
