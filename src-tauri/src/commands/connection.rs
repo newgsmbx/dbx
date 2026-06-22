@@ -9,8 +9,8 @@ pub use dbx_core::agent_connection::{
 };
 pub use dbx_core::connection::{
     agent_connect_timeout, connect_bare_metadata_pool, connect_mysql_metadata_pool, connection_url_for_endpoint,
-    metadata_connection_config, probe_connection_endpoint, redacted_connection_url_for_endpoint, AppState, MysqlMode,
-    PoolKind,
+    metadata_connection_config, prestosql_jdbc_config_for_endpoint, probe_connection_endpoint,
+    redacted_connection_url_for_endpoint, AppState, MysqlMode, PoolKind,
 };
 use dbx_core::database_capabilities;
 use dbx_core::db;
@@ -730,6 +730,10 @@ pub async fn test_connection(state: State<'_, Arc<AppState>>, config: Connection
             db_type if database_capabilities::is_agent_type(&db_type) => {
                 test_agent_connection(state.inner(), &config, &host, port).await
             }
+            DatabaseType::PrestoSql => {
+                let jdbc_config = prestosql_jdbc_config_for_endpoint(&config, &host, port);
+                state.test_external_driver("jdbc", &jdbc_config).await
+            }
             DatabaseType::Jdbc => {
                 let mut jdbc_config = config.clone();
                 if host != config.host || port != config.port {
@@ -986,6 +990,10 @@ pub async fn connect_db(state: State<'_, Arc<AppState>>, config: ConnectionConfi
         }
         db_type if database_capabilities::is_agent_type(&db_type) => {
             connect_agent_pool(state.inner(), &db_config, &host, port).await?
+        }
+        DatabaseType::PrestoSql => {
+            let jdbc_config = prestosql_jdbc_config_for_endpoint(&db_config, &host, port);
+            state.external_driver_pool("jdbc", &jdbc_config).await?
         }
         DatabaseType::Jdbc => state.external_driver_pool("jdbc", &db_config).await?,
         db_type => return Err(format!("Unsupported database type: {db_type:?}")),

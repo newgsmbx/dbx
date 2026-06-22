@@ -40,6 +40,7 @@ export type DatabaseType =
   | "h2"
   | "snowflake"
   | "trino"
+  | "prestosql"
   | "hive"
   | "db2"
   | "informix"

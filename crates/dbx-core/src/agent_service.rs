@@ -186,7 +186,7 @@ pub fn build_agent_list(am: &AgentManager, registry: Option<&AgentRegistry>) -> 
             let installed = am.is_driver_installed(key);
             let requires_java_runtime = am.driver_requires_java_runtime(key);
             let local = local_state.installed_drivers.get(key);
-            let remote = registry.and_then(|r| r.drivers.get(key));
+            let remote = registry.and_then(|r| agent_registry_driver(r, key));
             let jre_key = remote
                 .map(|r| r.jre.clone())
                 .or_else(|| local.map(|l| l.jre.clone()))
@@ -485,7 +485,7 @@ async fn install_agent_driver_from_registry(
     current: Option<u32>,
     total_drivers: Option<u32>,
 ) -> Result<(), String> {
-    let Some(driver) = registry.drivers.get(db_type) else {
+    let Some(driver) = agent_registry_driver(registry, db_type) else {
         if let Some(local_jar) = find_local_agent_jar(db_type) {
             install_local_agent(am, db_type, local_jar)?;
             am.stop_daemon_by_key(db_type).await;
@@ -591,6 +591,13 @@ async fn install_agent_driver_from_registry(
     am.stop_daemon_by_key(db_type).await;
     progress(AgentProgressEvent::step("done"));
     Ok(())
+}
+
+fn agent_registry_driver<'a>(
+    registry: &'a AgentRegistry,
+    db_type: &str,
+) -> Option<&'a crate::agent_manager::DriverInfo> {
+    registry.drivers.get(db_type)
 }
 
 #[allow(clippy::too_many_arguments)]

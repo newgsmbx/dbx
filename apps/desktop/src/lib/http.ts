@@ -228,6 +228,10 @@ export async function installJdbcDriverFromMaven(coordinate: string, repositorie
   return post("/api/jdbc/drivers/maven", { coordinate, repositories });
 }
 
+export async function installPrestoSqlJdbcDriver(): Promise<JdbcDriverInfo[]> {
+  return post("/api/jdbc/drivers/prestosql", {});
+}
+
 export async function deleteJdbcDriver(path: string): Promise<JdbcDriverInfo[]> {
   const fileName = path.split("/").pop() || path;
   return del(`/api/jdbc/drivers/${encodeURIComponent(fileName)}`);

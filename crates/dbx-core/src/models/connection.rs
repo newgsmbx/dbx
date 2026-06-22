@@ -290,6 +290,8 @@ pub enum DatabaseType {
     H2,
     Snowflake,
     Trino,
+    #[serde(rename = "prestosql")]
+    PrestoSql,
     Hive,
     #[serde(rename = "db2")]
     Db2,
@@ -762,6 +764,7 @@ impl ConnectionConfig {
             DatabaseType::H2 => format!("h2://{host}:{port}{db_part}"),
             DatabaseType::Snowflake => format!("snowflake://{host}/{db_part}"),
             DatabaseType::Trino => format!("trino://{host}:{port}{db_part}"),
+            DatabaseType::PrestoSql => format!("prestosql://{host}:{port}{db_part}"),
             DatabaseType::Hive => format!("hive://{host}:{port}{db_part}"),
             DatabaseType::Db2 => format!("db2://{host}:{port}{db_part}"),
             DatabaseType::Informix => format!("informix://{host}:{port}{db_part}"),
@@ -935,6 +938,9 @@ impl ConnectionConfig {
             }
             DatabaseType::Trino => {
                 format!("trino://{}:{}@{host}:{port}{db_part}", username, password)
+            }
+            DatabaseType::PrestoSql => {
+                format!("prestosql://{}:{}@{host}:{port}{db_part}", username, password)
             }
             DatabaseType::Hive => {
                 format!("hive://{}:{}@{host}:{port}{db_part}", username, password)

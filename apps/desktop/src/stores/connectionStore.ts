@@ -1,7 +1,7 @@
 import { defineStore } from "pinia";
 import { uuid } from "@/lib/utils";
 import { ref, computed, watch } from "vue";
-import type { ColumnInfo, ConnectionConfig, ForeignKeyInfo, ObjectInfo, SidebarLayout, TreeNode } from "@/types/database";
+import type { ColumnInfo, ConnectionConfig, ForeignKeyInfo, ObjectInfo, SidebarLayout, TableInfo, TreeNode } from "@/types/database";
 import { applyPinnedTreeNodeState, updatePinnedTreeNodeInPlace } from "@/lib/pinnedItems";
 import {
   reconcileLayout,
@@ -51,6 +51,7 @@ import { getTableMetadataCapabilities } from "@/lib/tableMetadataCapabilities";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { encodeSqlServerLinkedSchema, parseSqlServerLinkedSchema } from "@/lib/sqlServerLinkedServers";
 import { inferMongoCompletionFields, type MongoCompletionField } from "@/lib/mongoCompletion";
+import { completionSchemasFromTree, completionTablesFromTree } from "@/lib/completionTreeIndex";
 
 const PINNED_TREE_NODES_STORAGE_KEY = "dbx-pinned-tree-nodes";
 const ACTIVE_CONNECTION_STORAGE_KEY = "dbx-active-connection";
@@ -338,6 +339,7 @@ export const useConnectionStore = defineStore("connection", () => {
       h2: "H2",
       snowflake: "Snowflake",
       trino: "Trino",
+      prestosql: "PrestoSQL",
       hive: "Hive",
       db2: "DB2",
       informix: "Informix",
@@ -520,6 +522,14 @@ export const useConnectionStore = defineStore("connection", () => {
     return refreshedGroup?.children ?? [];
   }
 
+  function tableInfosToCompletionTables(tables: readonly TableInfo[], schema?: string): SqlCompletionTable[] {
+    return tables.map((table) => ({
+      name: table.name,
+      schema,
+      type: table.table_type === "VIEW" || table.table_type === "MATERIALIZED VIEW" ? "view" : "table",
+    }));
+  }
+
   async function loadPagedTableGroupChildren(options: {
     node: TreeNode;
     parentNodeId: string;
@@ -539,6 +549,7 @@ export const useConnectionStore = defineStore("connection", () => {
     const tables = await api.listTables(options.node.connectionId, options.node.database, options.querySchema, searchFilter, fetchLimit, searchFilter ? undefined : options.offset, options.objectTypes);
     const hasMore = searchFilter ? false : tables.length > options.pageSize;
     const pageTables = hasMore ? tables.slice(0, options.pageSize) : tables;
+    indexCompletionTables(options.node.connectionId, options.node.database, options.effectiveSchema, tableInfosToCompletionTables(pageTables, options.effectiveSchema));
     const objects = mergeTableInfosIntoObjects([], pageTables, options.effectiveSchema);
     const visibleObjectCount = objects.filter((object) => options.objectTypes.includes(normalizedObjectTreeKind(object.object_type))).length;
     return {
@@ -1533,6 +1544,7 @@ export const useConnectionStore = defineStore("connection", () => {
       if (simpleObjectDisplay) {
         try {
           const [objects, tables] = await Promise.all([api.listObjects(connectionId, database, querySchema), api.listTables(connectionId, database, querySchema)]);
+          indexCompletionTables(connectionId, database, effectiveSchema, tableInfosToCompletionTables(tables, effectiveSchema));
           children = buildSimpleObjectTreeNodes({
             nodeId,
             connectionId,
@@ -1542,6 +1554,7 @@ export const useConnectionStore = defineStore("connection", () => {
           });
         } catch {
           const tables = await api.listTables(connectionId, database, querySchema);
+          indexCompletionTables(connectionId, database, effectiveSchema, tableInfosToCompletionTables(tables, effectiveSchema));
           children = buildTableTreeNodes({ nodeId, connectionId, database, schema: effectiveSchema, tables });
         }
       } else {
@@ -2190,8 +2203,10 @@ export const useConnectionStore = defineStore("connection", () => {
     const allScopes = [...completionTableIndex.entries()].filter(([key]) => key.startsWith(`${connectionId}:${database}:`)).map(([, entry]) => entry);
     const preferred = schema ? completionTableIndex.get(completionScopeKey(connectionId, database, schema)) : undefined;
     const scopes = preferred ? [preferred, ...allScopes.filter((entry) => entry !== preferred)] : allScopes;
+    const treeTables = completionTablesFromTree(treeNodes.value, connectionId, database, schema);
     const ranked = scopes
       .flatMap((entry) => entry?.tables ?? [])
+      .concat(treeTables)
       .map((table) => ({ table, score: tableMatchScore(table, filter, schema) }))
       .filter((entry) => entry.score >= 0)
       .sort((a, b) => b.score - a.score || a.table.name.localeCompare(b.table.name));
@@ -2211,7 +2226,7 @@ export const useConnectionStore = defineStore("connection", () => {
   }
 
   function lookupLocalCompletionSchemas(connectionId: string, database: string, filter = "", limit = 50): string[] {
-    const schemas = schemaListCache.value[`${connectionId}:${database}`] ?? [];
+    const schemas = dedupeCompletionQualifierNames([...(schemaListCache.value[`${connectionId}:${database}`] ?? []), ...completionSchemasFromTree(treeNodes.value, connectionId, database)]);
     const normalized = filter.trim().toLowerCase();
     return schemas
       .filter((schema) => fuzzyTextMatch(schema, normalized))
@@ -2226,6 +2241,20 @@ export const useConnectionStore = defineStore("connection", () => {
       .filter((database) => fuzzyTextMatch(database, normalized))
       .sort((a, b) => tableMatchScore({ name: b }, normalized) - tableMatchScore({ name: a }, normalized))
       .slice(0, limit);
+  }
+
+  function dedupeCompletionQualifierNames(names: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const name of names) {
+      const normalized = name.trim();
+      if (!normalized) continue;
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      result.push(normalized);
+    }
+    return result;
   }
 
   function lookupLocalCompletionColumns(connectionId: string, database: string, table: string, schema?: string): SqlCompletionColumn[] {
@@ -2404,7 +2433,7 @@ export const useConnectionStore = defineStore("connection", () => {
           }
           const limitedTables = limit ? dedupeCompletionTables(results).slice(0, limit) : results;
           completionTablesCache.value[cacheKey] = limitedTables;
-          indexCompletionTables(connectionId, database, schema, limitedTables);
+          indexCompletionTables(connectionId, database, undefined, limitedTables);
           evictOldestCacheEntries(completionTablesCache.value, COMPLETION_CACHE_MAX);
           return completionTablesCache.value[cacheKey];
         }
@@ -2424,7 +2453,7 @@ export const useConnectionStore = defineStore("connection", () => {
           }),
         );
         completionTablesCache.value[cacheKey] = tableGroups.flat();
-        indexCompletionTables(connectionId, database, schema, completionTablesCache.value[cacheKey]);
+        indexCompletionTables(connectionId, database, undefined, completionTablesCache.value[cacheKey]);
         evictOldestCacheEntries(completionTablesCache.value, COMPLETION_CACHE_MAX);
         return completionTablesCache.value[cacheKey];
       }

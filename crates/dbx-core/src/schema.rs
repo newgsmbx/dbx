@@ -527,6 +527,11 @@ async fn list_tables_once(
             let config = config.clone();
             let session = session.clone();
             drop(connections);
+            if uses_presto_like_information_schema_tables(&config.db_type) {
+                return external_driver_presto_like_tables(session, config.as_ref(), database, schema)
+                    .await
+                    .map(|tables| filter_table_infos(tables, filter, limit, offset, object_types));
+            }
             return session
                 .invoke::<Vec<db::TableInfo>>(
                     "listTables",
@@ -750,11 +755,123 @@ fn normalize_table_info_object_type(value: &str) -> String {
     "TABLE".to_string()
 }
 
+fn uses_presto_like_information_schema_tables(db_type: &DatabaseType) -> bool {
+    matches!(db_type, DatabaseType::PrestoSql | DatabaseType::Trino)
+}
+
+async fn external_driver_presto_like_tables(
+    session: Arc<crate::plugins::PluginDriverSession>,
+    config: &ConnectionConfig,
+    database: &str,
+    schema: &str,
+) -> Result<Vec<db::TableInfo>, String> {
+    let result: db::QueryResult = session
+        .invoke(
+            "executeQuery",
+            serde_json::json!({
+                "connection": config,
+                "database": database,
+                "schema": schema,
+                "sql": presto_like_information_schema_tables_sql(database, schema),
+                "maxRows": 100000,
+                "fetchSize": 1000,
+                "timeoutSecs": 60
+            }),
+        )
+        .await?;
+    Ok(presto_like_tables_from_query_result(&result))
+}
+
+async fn external_driver_presto_like_objects(
+    session: Arc<crate::plugins::PluginDriverSession>,
+    config: &ConnectionConfig,
+    database: &str,
+    schema: &str,
+) -> Result<Vec<db::ObjectInfo>, String> {
+    let tables = external_driver_presto_like_tables(session, config, database, schema).await?;
+    Ok(tables
+        .into_iter()
+        .map(|table| db::ObjectInfo {
+            name: table.name,
+            object_type: table.table_type,
+            schema: Some(schema.to_string()),
+            comment: table.comment,
+            created_at: None,
+            updated_at: None,
+            parent_schema: table.parent_schema,
+            parent_name: table.parent_name,
+        })
+        .collect())
+}
+
+fn presto_like_information_schema_tables_sql(database: &str, schema: &str) -> String {
+    let source = if database.trim().is_empty() {
+        "information_schema.tables".to_string()
+    } else {
+        format!("{}.information_schema.tables", quote_presto_like_identifier(database))
+    };
+    format!(
+        "SELECT table_name, CASE table_type WHEN 'BASE TABLE' THEN 'TABLE' ELSE table_type END AS table_type \
+         FROM {source} \
+         WHERE table_schema = {} AND table_type IN ('BASE TABLE', 'VIEW') \
+         ORDER BY table_type, table_name",
+        sql_string_literal(schema)
+    )
+}
+
+fn presto_like_tables_from_query_result(result: &db::QueryResult) -> Vec<db::TableInfo> {
+    result
+        .rows
+        .iter()
+        .filter_map(|row| {
+            let name = query_result_cell_string(row, 0)?;
+            if name.trim().is_empty() {
+                return None;
+            }
+            Some(db::TableInfo {
+                name,
+                table_type: normalize_information_schema_table_type(
+                    query_result_cell_string(row, 1).as_deref().unwrap_or("TABLE"),
+                ),
+                comment: None,
+                parent_schema: None,
+                parent_name: None,
+            })
+        })
+        .collect()
+}
+
+fn query_result_cell_string(row: &[serde_json::Value], index: usize) -> Option<String> {
+    let value = row.get(index)?;
+    if value.is_null() {
+        return None;
+    }
+    value.as_str().map(ToString::to_string).or_else(|| Some(value.to_string()))
+}
+
+fn normalize_information_schema_table_type(table_type: &str) -> String {
+    match table_type.trim().to_ascii_uppercase().replace(' ', "_").as_str() {
+        "BASE_TABLE" => "TABLE".to_string(),
+        "VIEW" => "VIEW".to_string(),
+        "MATERIALIZED_VIEW" => "MATERIALIZED_VIEW".to_string(),
+        _ => table_type.to_string(),
+    }
+}
+
+fn quote_presto_like_identifier(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+fn sql_string_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         clickhouse_metadata_database, deduplicate_column_infos, filter_mysql_system_databases_for_config,
-        filter_table_infos, is_agent_postgres_metadata_fallback_config,
+        filter_table_infos, is_agent_postgres_metadata_fallback_config, normalize_information_schema_table_type,
+        presto_like_information_schema_tables_sql, presto_like_tables_from_query_result,
     };
     #[cfg(feature = "duckdb-bundled")]
     use super::{duckdb_attach_database, duckdb_list_databases, duckdb_query_tables_in_database};
@@ -920,6 +1037,51 @@ mod tests {
 
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "active_users");
+    }
+
+    #[test]
+    fn presto_like_information_schema_sql_uses_catalog_and_schema_without_system_jdbc() {
+        let sql = presto_like_information_schema_tables_sql("hive", "sales_analytics");
+
+        assert_eq!(
+            sql,
+            "SELECT table_name, CASE table_type WHEN 'BASE TABLE' THEN 'TABLE' ELSE table_type END AS table_type FROM \"hive\".information_schema.tables WHERE table_schema = 'sales_analytics' AND table_type IN ('BASE TABLE', 'VIEW') ORDER BY table_type, table_name"
+        );
+        assert!(!sql.contains("system.jdbc.tables"));
+    }
+
+    #[test]
+    fn presto_like_information_schema_sql_escapes_identifiers_and_literals() {
+        let sql = presto_like_information_schema_tables_sql("hi\"ve", "sales'analytics");
+
+        assert!(sql.contains("\"hi\"\"ve\".information_schema.tables"));
+        assert!(sql.contains("table_schema = 'sales''analytics'"));
+    }
+
+    #[test]
+    fn presto_like_tables_from_query_result_normalizes_base_table_type() {
+        let result = super::db::QueryResult {
+            columns: vec!["table_name".to_string(), "table_type".to_string()],
+            column_types: vec![],
+            column_sortables: vec![],
+            rows: vec![
+                vec![serde_json::json!("daily_revenue"), serde_json::json!("BASE TABLE")],
+                vec![serde_json::json!("revenue_view"), serde_json::json!("VIEW")],
+            ],
+            affected_rows: 0,
+            execution_time_ms: 1,
+            truncated: false,
+            session_id: None,
+            has_more: false,
+        };
+
+        let tables = presto_like_tables_from_query_result(&result);
+
+        assert_eq!(tables[0].name, "daily_revenue");
+        assert_eq!(tables[0].table_type, "TABLE");
+        assert_eq!(tables[1].name, "revenue_view");
+        assert_eq!(tables[1].table_type, "VIEW");
+        assert_eq!(normalize_information_schema_table_type("MATERIALIZED VIEW"), "MATERIALIZED_VIEW");
     }
 
     #[cfg(feature = "duckdb-bundled")]
@@ -1109,6 +1271,9 @@ async fn list_objects_once(
             let config = config.clone();
             let session = session.clone();
             drop(connections);
+            if uses_presto_like_information_schema_tables(&config.db_type) {
+                return external_driver_presto_like_objects(session, config.as_ref(), database, schema).await;
+            }
             return session
                 .invoke::<Vec<db::ObjectInfo>>(
                     "listObjects",

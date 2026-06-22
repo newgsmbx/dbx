@@ -66,6 +66,7 @@ export const listJdbcDrivers = forward("listJdbcDrivers");
 export const listJdbcMavenBundles = forward("listJdbcMavenBundles");
 export const importJdbcDrivers = forward("importJdbcDrivers");
 export const installJdbcDriverFromMaven = forward("installJdbcDriverFromMaven");
+export const installPrestoSqlJdbcDriver = forward("installPrestoSqlJdbcDriver");
 export const deleteJdbcDriver = forward("deleteJdbcDriver");
 export const deleteJdbcMavenBundle = forward("deleteJdbcMavenBundle");
 export const jdbcPluginStatus = forward("jdbcPluginStatus");

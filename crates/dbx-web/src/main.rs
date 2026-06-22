@@ -164,6 +164,7 @@ async fn main() {
             "/jdbc/drivers/maven",
             get(routes::jdbc::list_jdbc_maven_bundles).post(routes::jdbc::install_jdbc_driver_from_maven),
         )
+        .route("/jdbc/drivers/prestosql", post(routes::jdbc::install_prestosql_jdbc_driver))
         .route("/jdbc/drivers/maven/{bundle_id}", delete(routes::jdbc::delete_jdbc_maven_bundle))
         .route("/jdbc/drivers/{name}", delete(routes::jdbc::delete_jdbc_driver))
         .route("/jdbc/plugin/status", get(routes::jdbc::get_jdbc_plugin_status))
