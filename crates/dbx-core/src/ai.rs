@@ -439,11 +439,14 @@ pub fn supports_temperature(config: &AiConfig) -> bool {
     !(is_kimi_model(&config.model) || is_openai_api_config(config) && is_openai_reasoning_model(&config.model))
 }
 
-pub fn add_temperature_if_supported(body: &mut serde_json::Value, request: &AiCompletionRequest) {
-    if supports_temperature(&request.config) {
-        let default_temp = if is_kimi_model(&request.config.model) { 1.0 } else { 0.2 };
-        body["temperature"] = json!(request.temperature.unwrap_or(default_temp));
+fn add_temperature_if_supported_for_config(body: &mut serde_json::Value, config: &AiConfig, temperature: Option<f32>) {
+    if supports_temperature(config) {
+        body["temperature"] = json!(temperature.unwrap_or(0.2));
     }
+}
+
+pub fn add_temperature_if_supported(body: &mut serde_json::Value, request: &AiCompletionRequest) {
+    add_temperature_if_supported_for_config(body, &request.config, request.temperature);
 }
 
 fn responses_text(data: &serde_json::Value) -> String {
@@ -947,10 +950,10 @@ pub async fn test_connection_core(config: &AiConfig) -> Result<AiTestConnectionR
                 "model": &model,
                 "messages": messages,
                 "max_tokens": 16,
-                "temperature": 0.0,
                 "stream": true,
             });
-            if !config.enable_thinking {
+            add_temperature_if_supported_for_config(&mut body_obj, config, Some(0.0));
+            if !config.enable_thinking && !is_kimi_model(&config.model) {
                 body_obj["extra_body"] = json!({
                     "chat_template_kwargs": { "enable_thinking": false }
                 });
@@ -2093,11 +2096,11 @@ pub fn load_config(path: &Path) -> Result<Option<AiConfig>, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_ai_http_client, claude_headers, claude_system_prompt, gemini_text, is_kimi_model, openai_response_text,
-        openai_stream_reasoning, openai_stream_text, parse_model_list_response, resolve_endpoint,
-        resolve_model_list_endpoint, responses_max_output_tokens, responses_text, supports_temperature,
-        validate_config, AiApiStyle, AiAuthMethod, AiConfig, AiModelInfo, AiProvider, AiReasoningLevel, AUTHORIZATION,
-        CLAUDE_DEFAULT_SYSTEM,
+        add_temperature_if_supported_for_config, build_ai_http_client, claude_headers, claude_system_prompt,
+        gemini_text, is_kimi_model, openai_response_text, openai_stream_reasoning, openai_stream_text,
+        parse_model_list_response, resolve_endpoint, resolve_model_list_endpoint, responses_max_output_tokens,
+        responses_text, supports_temperature, validate_config, AiApiStyle, AiAuthMethod, AiConfig, AiModelInfo,
+        AiProvider, AiReasoningLevel, AUTHORIZATION, CLAUDE_DEFAULT_SYSTEM, TEST_PROMPT,
     };
 
     #[test]
@@ -2446,6 +2449,40 @@ mod tests {
         config.model = "kimi-k2.4".to_string();
         assert!(supports_temperature(&config));
         assert!(!is_kimi_model(&config.model));
+    }
+
+    #[test]
+    fn omits_temperature_for_kimi_test_connection_body() {
+        let config = AiConfig {
+            provider: AiProvider::OpenaiCompatible,
+            api_key: "key".to_string(),
+            auth_method: AiAuthMethod::Bearer,
+            endpoint: "https://api.moonshot.cn/v1".to_string(),
+            model: "kimi-k2.5".to_string(),
+            api_style: AiApiStyle::Completions,
+            proxy_enabled: false,
+            proxy_url: String::new(),
+            enable_thinking: false,
+            reasoning_level: AiReasoningLevel::Default,
+            context_window: None,
+            codex_cli_path: None,
+        };
+        let mut body = serde_json::json!({
+            "model": &config.model,
+            "messages": [{ "role": "user", "content": TEST_PROMPT }],
+            "max_tokens": 16,
+            "stream": true,
+        });
+
+        add_temperature_if_supported_for_config(&mut body, &config, Some(0.0));
+        if !config.enable_thinking && !is_kimi_model(&config.model) {
+            body["extra_body"] = serde_json::json!({
+                "chat_template_kwargs": { "enable_thinking": false }
+            });
+        }
+
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("extra_body").is_none());
     }
 
     #[test]
